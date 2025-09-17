@@ -91,14 +91,6 @@ def first_non_null(series):
             return x
     return None
 
-counts_df = (
-    df_dmso.groupby("Compound_Name", dropna=False)
-           .size()
-           .reset_index(name="Count")
-           .sort_values("Count", ascending=False)
-           .reset_index(drop=True)
-)
-
 # -------------------------
 # Display
 # -------------------------
@@ -110,15 +102,23 @@ st.sidebar.header("Filters")
 
 tmin = float(np.nanmin(df_dmso["Temperature_K"]))
 tmax = float(np.nanmax(df_dmso["Temperature_K"]))
-temp_range = st.sidebar.slider(
-    "Temperature (K) range",
+
+lowK = st.sidebar.number_input(
+    "Min Temperature (K)",
     min_value=float(np.floor(tmin)),
     max_value=float(np.ceil(tmax)),
-    value=(float(np.floor(tmin)), float(np.ceil(tmax))),
+    value=float(np.floor(tmin)),
     step=1.0,
 )
 
-lowK, highK = temp_range
+highK = st.sidebar.number_input(
+    "Max Temperature (K)",
+    min_value=float(np.floor(tmin)),
+    max_value=float(np.ceil(tmax)),
+    value=float(np.ceil(tmax)),
+    step=1.0,
+)
+
 # Filtered view for the MAIN DMSO TABLE only
 mask = (df_dmso["Temperature_K"] >= lowK) & (df_dmso["Temperature_K"] <= highK)
 df_view = df_dmso.loc[mask].copy().reset_index(drop=True)
@@ -154,7 +154,7 @@ st.dataframe(
 # Per-solute counts (GLOBAL, UNFILTERED)
 # -------------------------
 counts_df = (
-    df_dmso.groupby("SMILES_Solute", dropna=False)
+    df_dmso.groupby("Compound_Name", dropna=False)
            .size()
            .reset_index(name="Count")
            .sort_values("Count", ascending=False)
@@ -166,6 +166,7 @@ st.dataframe(
     counts_df,
     hide_index=True,
     column_config={
+        "Index": st.column_config.NumberColumn("Idx"),
         "Compound_Name": st.column_config.TextColumn("Compound_Name"),
         "Count": st.column_config.NumberColumn("Count"),
     },
