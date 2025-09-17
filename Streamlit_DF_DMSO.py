@@ -166,8 +166,7 @@ st.dataframe(
     counts_df,
     hide_index=True,
     column_config={
-        "SMILES_Solute": st.column_config.TextColumn("Solute (SMILES)"),
+        "Compound_Name": st.column_config.TextColumn("Compound_Name"),
         "Count": st.column_config.NumberColumn("Count"),
     },
 )
-
