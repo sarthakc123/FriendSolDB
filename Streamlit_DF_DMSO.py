@@ -8,88 +8,88 @@ import streamlit as st
 from rdkit import Chem
 from rdkit.Chem import Draw
 from rdkit.Chem.rdMolDescriptors import CalcMolFormula
+from rdkit.Chem import rdDepictor
 
 # -------------------------
 # Config
 # -------------------------
 IMAGE_DIR = "molecule_images"   # folder to save PNGs
-
+THUMB_SIZE = (280, 280)   # smaller = faster
+PAGE_SIZE_DEFAULT = 50    # rows per page in the table
 # -------------------------
 # Load & clean
 # -------------------------
-df = pd.read_csv(
-    "bigsoldb.csv",
-    dtype={
-        "SMILES_Solute": str,
-        "Temperature_K": float,
-        "Solvent": str,
-        "SMILES_Solvent": str,
-        "Solubility(mole_fraction)": float,
-        "Solubility(mol/L)": float,
-        "LogS(mol/L)": float,
-        "Compound_Name": str,
-    },
-)
+@st.cache_data(show_spinner=False)
+def load_df(path: str) -> pd.DataFrame:
+    df = pd.read_csv(
+        path,
+        dtype={
+            "SMILES_Solute": str,
+            "Temperature_K": float,
+            "Solvent": str,
+            "SMILES_Solvent": str,
+            "Solubility(mole_fraction)": float,
+            "Solubility(mol/L)": float,
+            "LogS(mol/L)": float,
+            "Compound_Name": str,
+        },
+    )
+    return df.dropna(subset=["LogS(mol/L)"])
 
-df_cleaned = df.dropna(subset=["LogS(mol/L)"])
-
-# Focus on DMSO subset
-df_dmso = df_cleaned.loc[df_cleaned["Solvent"] == "DMSO"].copy()
-
-# -------------------------
-# RDKit helpers
-# -------------------------
-def mol_to_data_url(mol, size=(500, 500)):
-    if mol is None:
+@st.cache_data(show_spinner=False)
+def smiles_to_mol_with_coords(smiles: str):
+    """Parse once and compute 2D coords; cache by SMILES string."""
+    if smiles is None or pd.isna(smiles):
         return None
-    img = Draw.MolToImage(mol, size=size)
+    m = Chem.MolFromSmiles(smiles)
+    if m is None:
+        return None
+    rdDepictor.Compute2DCoords(m)
+    return Chem.Mol(m)  # return a copy that is serializable
+
+@st.cache_data(show_spinner=False)
+def mol_png_data_url(smiles: str, size=(280, 280)) -> str | None:
+    """Cached PNG (as data URL) per SMILES+size."""
+    m = smiles_to_mol_with_coords(smiles)
+    if m is None:
+        return None
+    img = Draw.MolToImage(m, size=size)
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     b64 = base64.b64encode(buf.getvalue()).decode()
     return f"data:image/png;base64,{b64}"
 
-def sanitize_filename(name: str) -> str:
-    """Safe-ish filename component."""
-    if name is None or pd.isna(name):
-        return ""
-    name = name.strip()
-    name = re.sub(r"[^\w\-\.]+", "_", name)
-    return name[:80]
+@st.cache_data(show_spinner=False)
+def compute_global_counts(df_dmso: pd.DataFrame) -> pd.DataFrame:
+    return (
+        df_dmso.groupby("SMILES_Solute", dropna=False)
+               .size()
+               .reset_index(name="Count")
+               .sort_values("Count", ascending=False)
+               .reset_index(drop=True)
+    )
 
 # -------------------------
-# Build molecules & formulas (DMSO view)
+# Load & subset
 # -------------------------
-df_dmso["Structure"] = df_dmso["SMILES_Solute"].apply(Chem.MolFromSmiles)
-df_dmso["Formula"] = df_dmso["Structure"].apply(lambda m: CalcMolFormula(m) if m else None)
-df_dmso["img_data_url"] = df_dmso["Structure"].apply(mol_to_data_url)
+df_cleaned = load_df("bigsoldb.csv")
+df_dmso = df_cleaned.loc[df_cleaned["Solvent"] == "DMSO"].copy()
 
-# Assign permanent global index (for DMSO view)
+# Assign permanent global index once
 df_dmso = df_dmso.reset_index(drop=True)
 df_dmso["Idx"] = df_dmso.index + 1
 
 # -------------------------
-# Directly save all images (index-only filenames)
+# Build *light* columns using cached functions
+# (delay heavy work until needed; use SMILES -> cached image)
 # -------------------------
-os.makedirs(IMAGE_DIR, exist_ok=True)
-saved = 0
-# for _, row in df_dmso.iterrows():
-#     mol = row["Structure"]
-#     if mol is None:
-#         continue
-#     idx = int(row["Idx"])
-#     path = os.path.join(IMAGE_DIR, f"mol_{idx:05d}.png")
-#     Draw.MolToFile(mol, path, size=(500, 500))
-#     saved += 1
-
-# -------------------------
-# Unique solvent count per solute (entire dataset)
-# -------------------------
-# Build a table with: SMILES_Solute | Compound_Name (first non-null) | Unique_Solvents | Solvent_List
-def first_non_null(series):
-    for x in series:
-        if pd.notna(x) and str(x).strip() != "":
-            return x
-    return None
+# Formula is quick; keep it. Image uses cached data-url per unique SMILES.
+df_dmso["Formula"] = df_dmso["SMILES_Solute"].apply(
+    lambda s: CalcMolFormula(smiles_to_mol_with_coords(s)) if s else None
+)
+df_dmso["img_data_url"] = df_dmso["SMILES_Solute"].apply(
+    lambda s: mol_png_data_url(s, size=THUMB_SIZE)
+)
 
 # -------------------------
 # Display
