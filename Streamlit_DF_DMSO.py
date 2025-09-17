@@ -73,7 +73,8 @@ def compute_global_counts(df_dmso: pd.DataFrame) -> pd.DataFrame:
 # Load & subset
 # -------------------------
 df_cleaned = load_df("bigsoldb.csv")
-df_dmso = df_cleaned.loc[df_cleaned["Solvent"] == "DMSO"].copy()
+allowed_solvents = ["DMSO", "water", "acetone", "n-hexane", "THF"]
+df_dmso = df_cleaned[df_cleaned["Solvent"].isin(allowed_solvents)].copy()
 
 # Assign permanent global index once
 df_dmso = df_dmso.reset_index(drop=True)
@@ -119,36 +120,80 @@ highK = st.sidebar.number_input(
     step=1.0,
 )
 
-# Filtered view for the MAIN DMSO TABLE only
-mask = (df_dmso["Temperature_K"] >= lowK) & (df_dmso["Temperature_K"] <= highK)
-df_view = df_dmso.loc[mask].copy().reset_index(drop=True)
+# -------------------------
+# Sidebar: Multi-select Solvent + Solute
+# -------------------------
+st.sidebar.header("Select Solvent(s) & Solute(s)")
+
+# (You already restricted df_dmso earlier. Remove the duplicate restriction block.)
+
+# Multi-select solvents (default: all allowed present)
+solvent_options = sorted(df_dmso["Solvent"].unique().tolist())
+selected_solvents = st.sidebar.multiselect(
+    "Choose Solvent(s)", solvent_options, default=solvent_options
+)
+
+# Solute options limited to chosen solvents
+if selected_solvents:
+    solute_options = (
+        df_dmso.loc[df_dmso["Solvent"].isin(selected_solvents), "Compound_Name"]
+        .dropna()
+        .unique()
+        .tolist()
+    )
+    solute_options = sorted(solute_options)
+else:
+    solute_options = []
+
+selected_solutes = st.sidebar.multiselect(
+    "Choose Solute(s) (Compound Name)", solute_options
+)
 
 # -------------------------
-# Display table (FILTERED BY TEMPERATURE)
+# Build df_selected from dropdowns
 # -------------------------
-st.title(f"Molecules in DMSO (Temperature {lowK:.0f}–{highK:.0f} K)")
-st.dataframe(
-    df_view[
-        [
-            "Idx",
-            "SMILES_Solute",
-            "Temperature_K",
-            "Solvent",
-            "SMILES_Solvent",
-            "Solubility(mole_fraction)",
-            "Solubility(mol/L)",
-            "LogS(mol/L)",
-            "Compound_Name",
-            "Formula",
-            "img_data_url",
-        ]
-    ],
-    column_config={
-        "img_data_url": st.column_config.ImageColumn("Structure", help="RDKit molecule"),
-        "Idx": st.column_config.NumberColumn("Index"),
-    },
-    hide_index=True,
-)
+df_selected = df_dmso[df_dmso["Solvent"].isin(selected_solvents)].copy()
+
+# If user picked any solutes, filter by them; otherwise keep all solutes in the chosen solvents
+if selected_solutes:
+    df_selected = df_selected[df_selected["Compound_Name"].isin(selected_solutes)]
+
+# -------------------------
+# Apply temperature filter to df_selected (NOT whole df_dmso)
+# -------------------------
+mask = (df_selected["Temperature_K"] >= lowK) & (df_selected["Temperature_K"] <= highK)
+df_view = df_selected.loc[mask].reset_index(drop=True)
+
+# -------------------------
+# Display table (FILTERED BY DROPDOWNS + TEMPERATURE)
+# -------------------------
+st.title(f"Molecules ({', '.join(selected_solvents) or '—'}) "
+         f"(Temperature {lowK:.0f}–{highK:.0f} K)")
+if df_view.empty:
+    st.info("No rows match the current solvent/solute/temperature filters.")
+else:
+    st.dataframe(
+        df_view[
+            [
+                "Idx",
+                "SMILES_Solute",
+                "Temperature_K",
+                "Solvent",
+                "SMILES_Solvent",
+                "Solubility(mole_fraction)",
+                "Solubility(mol/L)",
+                "LogS(mol/L)",
+                "Compound_Name",
+                "Formula",
+                "img_data_url",
+            ]
+        ],
+        column_config={
+            "img_data_url": st.column_config.ImageColumn("Structure", help="RDKit molecule"),
+            "Idx": st.column_config.NumberColumn("Index"),
+        },
+        hide_index=True,
+    )
 
 # -------------------------
 # Per-solute counts (GLOBAL, UNFILTERED)
@@ -166,8 +211,7 @@ st.dataframe(
     counts_df,
     hide_index=True,
     column_config={
-        "Index": st.column_config.NumberColumn("Idx"),
-        "Compound_Name": st.column_config.TextColumn("Compound_Name"),
+        "Compound_Name": st.column_config.TextColumn("Compound Name"),
         "Count": st.column_config.NumberColumn("Count"),
     },
 )
